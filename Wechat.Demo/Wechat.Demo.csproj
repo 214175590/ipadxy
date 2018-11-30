@@ -36,6 +36,9 @@
     <WarningLevel>4</WarningLevel>
     <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
+  <PropertyGroup>
+    <StartupObject>Wechat.Demos.App</StartupObject>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="Newtonsoft.Json, Version=11.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <HintPath>..\packages\Newtonsoft.Json.11.0.2\lib\net45\Newtonsoft.Json.dll</HintPath>
@@ -67,6 +70,7 @@
     <Compile Include="Wechat\IpadDll.cs" />
     <Compile Include="Wechat\MsgDelegate.cs" />
     <Compile Include="Wechat\Utf8Marshaler.cs" />
+    <Compile Include="Wechat\WechatUserStatus.cs" />
     <Compile Include="WxIpad.cs" />
     <Page Include="MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>

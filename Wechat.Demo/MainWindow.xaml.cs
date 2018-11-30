@@ -98,11 +98,18 @@ namespace Wechat.Demo
                 this.StatusBar.Text = value;
             });
         }
-        void ShowLoginByQr(Image image)
+        void ShowLoginByQr(string base64Image)
         {
             Dispatcher.Invoke(() =>
             {
-                this.ImgQrLogin.Source = ConvertBitmapImage(image);
+                byte[] binaryData = Convert.FromBase64String(base64Image);
+
+                BitmapImage bi = new BitmapImage();
+                bi.BeginInit();
+                bi.StreamSource = new MemoryStream(binaryData);
+                bi.EndInit();
+
+                this.ImgQrLogin.Source = bi;
             });
         }
         void ShowUserLogin(WxUserDataDto user)
@@ -128,7 +135,7 @@ namespace Wechat.Demo
             using (img)
             using (var memory = new MemoryStream())
             {
-                img.Save(memory, ImageFormat.Png);
+                img.Save(memory, ImageFormat.MemoryBmp);
                 memory.Position = 0;
 
                 var bitmapImage = new BitmapImage();

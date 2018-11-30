@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Media.Imaging;
 using Wechat.Demo.Config;
 using Wechat.Demo.Wechat;
 using Wechat.Demo.Wechat.Dtos;
@@ -19,12 +20,25 @@ namespace Wechat.Demo
         readonly int dllPort = 0;
 
         public delegate void StatusBar(string value);
-        public delegate void QrLoginInfo(Image image);
+        public delegate void QrLoginInfo(string base64Image);
         public delegate void UserLogin(WxUserDataDto user);
 
         int wxUser;
         int pushStr;
+        int msgptr;
         WxUserDto user = new WxUserDto();
+
+        private WechatUserStatus _userStatus = WechatUserStatus.Pending;
+        /// <summary>
+        /// 心跳检查定时器
+        /// </summary>
+        private System.Threading.Timer _tmpHeartBeatTimer = null;
+        /// <summary>
+        /// 断线重连定时器
+        /// </summary>
+        private System.Threading.Timer _tmpReConnectionTimer = null;
+        private int mHeartBeatInterval = 1000 * 10;
+        private int mReConnectionInterval = 1000 * 10;
 
         public WxIpad()
         {
@@ -46,16 +60,22 @@ namespace Wechat.Demo
                     throw;
                 }
             });
+
+            _tmpHeartBeatTimer = new System.Threading.Timer(HeartBeatCallBack, null, mHeartBeatInterval, mHeartBeatInterval);
+
+            _tmpReConnectionTimer = new System.Threading.Timer(ReConnectionCallBack, null, mReConnectionInterval, mReConnectionInterval);
         }
 
         public IpadDll.DllcallBack outputDelegate { get; set; }
         unsafe void Init()
         {
+            this._userStatus = WechatUserStatus.Initing;
             fixed (int* WxUser = &wxUser, PushStr = &pushStr)
             {
                 string uuid = IpadDll.FakeUuId();
                 var mac = IpadDll.FakeMac();
 
+                //var ret = IpadDll.WXSetNetworkVerifyInfo("116.62.17.77", 9000);//ipadtest
                 var ret = IpadDll.WXSetNetworkVerifyInfo(this.dllIP, this.dllPort);
                 if (ret != 1)
                 {
@@ -71,13 +91,18 @@ namespace Wechat.Demo
                 var msg = Marshal.PtrToStringAnsi(new IntPtr(Convert.ToInt32(pushStr)));
                 WxQrCodeDto qrcode = Newtonsoft.Json.JsonConvert.DeserializeObject<WxQrCodeDto>(msg);//反序列化
 
-                var img = Base64StringToImage(qrcode.QrCode);
-                MsgDelegate.QrLogin(img);
+                //var img = Base64StringToImage(qrcode.QrCode);
+                MsgDelegate.QrLogin(qrcode.QrCode);
 
                 WXReleaseEX(ref pushStr);
                 WxQrResultDto qrCoderesult = null;
                 while (true)
                 {
+                    if (!(this._userStatus == WechatUserStatus.Initing || this._userStatus == WechatUserStatus.Scaning))
+                    {
+                        break;
+                    }
+                    this._userStatus = WechatUserStatus.Scaning;
                     IpadDll.WXCheckQRCode(wxUser, (int)PushStr);
                     var datas = MarshalNativeToManaged((IntPtr)pushStr);
                     if (datas == null)
@@ -122,6 +147,7 @@ namespace Wechat.Demo
 
                         if (userdata.Status == 0)
                         {
+                            this._userStatus = WechatUserStatus.Logined;
                             MsgDelegate.Show("登录成功");
                             IpadDll.WXHeartBeat(wxUser, (int)PushStr);
                             datas = MarshalNativeToManaged((IntPtr)pushStr);
@@ -134,6 +160,7 @@ namespace Wechat.Demo
                         }
                         else
                         {
+                            this._userStatus = WechatUserStatus.Failed;
                             MsgDelegate.UserLogin(null);
                             MsgDelegate.Show("登录失败");
                         }
@@ -142,6 +169,7 @@ namespace Wechat.Demo
 
                     if (userdata.Status == 0)
                     {
+                        this._userStatus = WechatUserStatus.Logined;
                         MsgDelegate.Show("登录成功");
                         IpadDll.WXHeartBeat(wxUser, (int)PushStr);
                         datas = MarshalNativeToManaged((IntPtr)pushStr);
@@ -154,12 +182,14 @@ namespace Wechat.Demo
                     }
                     else
                     {
+                        this._userStatus = WechatUserStatus.Failed;
                         MsgDelegate.UserLogin(null);
                         MsgDelegate.Show("登录失败");
                     }
                 }
                 else
                 {
+                    this._userStatus = WechatUserStatus.Failed;
                     MsgDelegate.UserLogin(null);
                     MsgDelegate.Show("登录失败");
                 }
@@ -168,7 +198,7 @@ namespace Wechat.Demo
 
         public unsafe void SyncList()
         {
-            
+            //TODO...
         }
 
         /// <summary>
@@ -192,17 +222,27 @@ namespace Wechat.Demo
             IpadDll.WXRelease(hande);
             hande = 0;
         }
-        private Bitmap Base64StringToImage(string basestr)
+        public BitmapImage ImageFromBuffer(Byte[] bytes)
         {
-            Bitmap bitmap = null;
+            MemoryStream stream = new MemoryStream(bytes);
+            BitmapImage image = new BitmapImage();
+            image.BeginInit();
+            image.StreamSource = stream;
+            image.EndInit();
+            return image;
+        }
+        private BitmapImage Base64StringToImage(string basestr)
+        {
+            BitmapImage bitmap = null;
             try
             {
                 String inputStr = basestr;
                 byte[] arr = Convert.FromBase64String(inputStr);
-                MemoryStream ms = new MemoryStream(arr);
-                Bitmap bmp = new Bitmap(ms);
-                ms.Close();
-                bitmap = bmp;
+                //MemoryStream ms = new MemoryStream(arr);
+                //Bitmap bmp = new Bitmap(ms);
+                //ms.Close();
+                //bitmap = bmp;
+                bitmap = ImageFromBuffer(arr);
             }
             catch (Exception ex)
             {
@@ -211,7 +251,7 @@ namespace Wechat.Demo
 
             return bitmap;
         }
-        public object MarshalNativeToManaged(IntPtr pNativeData)
+        private object MarshalNativeToManaged(IntPtr pNativeData)
         {
             if (pNativeData == IntPtr.Zero)
             {
@@ -230,6 +270,78 @@ namespace Wechat.Demo
                 num++;
             }
             return Encoding.UTF8.GetString(list.ToArray(), 0, list.Count);
+        }
+
+        int _heartCount = 0;
+        int _heartMsgMaxCount = 0;
+        private void HeartBeatCallBack(object state)
+        {
+            try
+            {
+                //if (_userStatus == WechatUserStatus.Logined)
+                //{
+                //    MsgDelegate.Show($"心跳检测正常（{_heartCount++}, {_heartMsgMaxCount}）");
+                //    if (_heartMsgMaxCount <= 0) _heartMsgMaxCount = new Random().Next(300, 500);
+                //    if (_heartCount >= _heartMsgMaxCount)
+                //    {
+                //        var file = "./txt.txt";
+                //        string words = string.Empty;
+                //        if (File.Exists(file))
+                //        {
+                //            var random = new Random();
+                //            string[] allline = File.ReadAllLines("./txt.txt");
+                //            words = string.Format("{0}，{1}", allline[random.Next(0, 900)], allline[random.Next(0, 900)]);
+                //            if (random.Next(0, 100) >= 30)
+                //            {
+                //                words += (" " + allline[random.Next(0, 900)]);
+                //            }
+                //        }
+                //        var msg = $"信息c{_heartCount}-{_heartMsgMaxCount}，{words}" + DateTime.Now;
+                //        //TODO 发消息到远程 //TEST
+                //        Sendmsg("wxid_ehlzmhyfn20012", msg);
+
+                //        //进行发消息稳定性测试
+                //        _heartMsgMaxCount = new Random().Next(300, 500);
+                //        _heartCount = 0;
+                //    }
+                //}
+                _tmpHeartBeatTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                //TODO...
+            }
+            finally
+            {
+                _tmpHeartBeatTimer.Change(mHeartBeatInterval, mHeartBeatInterval);
+            }
+        }
+        private void ReConnectionCallBack(object state)
+        {
+            try
+            {
+                _tmpReConnectionTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                //TODO...
+            }
+            finally
+            {
+                _tmpReConnectionTimer.Change(mHeartBeatInterval, mHeartBeatInterval);
+            }
+        }
+
+        /// <summary>
+        /// 发消息 -文字
+        /// </summary>
+        /// <param name="wxid"></param>
+        /// <param name="content"></param>
+        public unsafe void Sendmsg(string wxid, string content)
+        {
+            MsgDelegate.Show(string.Format("发送文字 {0}", content));
+            content = content.Replace(" ", "\r\n");
+            fixed (int* WxUser = &wxUser, Msgptr = &msgptr)
+            {
+                IpadDll.WXSendMsg(wxUser, wxid, content, null, (int)Msgptr);
+                //var datas = MarshalNativeToManaged((IntPtr)msgptr);
+                //var str = datas.ToString();
+                WXReleaseEX(ref msgptr);
+            }
         }
     }
 }
